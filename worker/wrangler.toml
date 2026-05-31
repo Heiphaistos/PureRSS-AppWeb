@@ -2,9 +2,10 @@ name = "purerss-worker"
 main = "src/index.ts"
 compatibility_date = "2025-05-01"
 compatibility_flags = ["nodejs_compat"]
+account_id = "ee1c2a0b3c149274df1a16ac178f8866"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "purerss-db"
-database_id = "PLACEHOLDER"
+database_id = "78d6e441-0a18-44e4-b9fc-85e827662fb3"
 migrations_dir = "../migrations"
