@@ -4,6 +4,7 @@ import * as db from "../db/schema.ts";
 import { extractGeneric } from "../extractors/generic.ts";
 import { extractYoutube } from "../extractors/youtube.ts";
 import { extractSocial } from "../extractors/social.ts";
+import { extractRss } from "../extractors/rss.ts";
 import { buildRss } from "../rss/builder.ts";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -21,7 +22,7 @@ function validateAddFeed(body: unknown): {
   if (typeof b.source_url !== "string" || !b.source_url) throw new Error("source_url requis");
   try { new URL(b.source_url); } catch { throw new Error("source_url invalide"); }
   const feed_type = typeof b.feed_type === "string" ? b.feed_type : "generic";
-  if (!["generic", "youtube", "social"].includes(feed_type)) throw new Error("feed_type invalide");
+  if (!["generic", "youtube", "social", "rss"].includes(feed_type)) throw new Error("feed_type invalide");
   return {
     name: b.name,
     source_url: b.source_url,
@@ -100,6 +101,8 @@ app.post("/:id/refresh", async (c) => {
       extracted = await extractYoutube(feed.source_url);
     } else if (feed.feed_type === "social") {
       extracted = await extractSocial(feed.source_url);
+    } else if (feed.feed_type === "rss") {
+      extracted = await extractRss(feed.source_url);
     } else {
       extracted = await extractGeneric(
         feed.source_url,

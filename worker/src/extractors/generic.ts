@@ -1,4 +1,5 @@
 import { parse, type HTMLElement } from "node-html-parser";
+import { extractRss, parseAnyFeed } from "./rss.ts";
 
 export interface ExtractedItem {
   title: string;
@@ -6,6 +7,37 @@ export interface ExtractedItem {
   description?: string;
   pub_date?: string;
   author?: string;
+}
+
+const RSS_CONTENT_TYPES = [
+  "application/rss+xml",
+  "application/atom+xml",
+  "application/xml",
+  "text/xml",
+];
+
+function isRssContentType(ct: string): boolean {
+  return RSS_CONTENT_TYPES.some(t => ct.toLowerCase().includes(t));
+}
+
+// Cherche <link rel="alternate" type="application/rss+xml|atom+xml" href="...">
+function discoverFeedUrl(html: string, base: URL): string | null {
+  const re = /<link[^>]+rel=["']alternate["'][^>]+>/gi;
+  for (const match of html.matchAll(re)) {
+    const tag = match[0];
+    if (!/type=["'](application\/(rss|atom)\+xml|text\/xml)/i.test(tag)) continue;
+    const href = tag.match(/href=["']([^"']+)["']/i)?.[1];
+    if (!href) continue;
+    try { return new URL(href, base).toString(); } catch { /**/ }
+  }
+  // Aussi chercher sans rel="alternate" explicite
+  const re2 = /<link[^>]+type=["'](application\/(rss|atom)\+xml|text\/xml)["'][^>]*>/gi;
+  for (const match of html.matchAll(re2)) {
+    const href = match[0].match(/href=["']([^"']+)["']/i)?.[1];
+    if (!href) continue;
+    try { return new URL(href, base).toString(); } catch { /**/ }
+  }
+  return null;
 }
 
 // Patterns testés en ordre pour auto-détecter les articles
@@ -33,17 +65,34 @@ export async function extractGeneric(
   selectorDescription?: string,
   selectorDate?: string,
 ): Promise<ExtractedItem[]> {
-  const html = await fetchHtml(sourceUrl);
-  const root = parse(html);
-  const base = new URL(sourceUrl);
+  // ── 1. Fetch (détecter si déjà un flux RSS/Atom) ──
+  const { html, contentType } = await fetchRaw(sourceUrl);
 
-  // ── Sélecteurs custom fournis par l'utilisateur ──
+  if (isRssContentType(contentType)) {
+    return parseAnyFeed(html);
+  }
+
+  const base = new URL(sourceUrl);
   const isDefault = selectorTitle === "h2 a" && selectorLink === "h2 a";
+
+  // ── 2. Sélecteurs custom fournis par l'utilisateur ──
   if (!isDefault) {
+    const root = parse(html);
     return extractWithSelectors(root, base, selectorTitle, selectorLink, selectorDescription, selectorDate);
   }
 
-  // ── Auto-détection : chercher des conteneurs article ──
+  // ── 3. Autodiscovery RSS/Atom natif ──
+  const feedUrl = discoverFeedUrl(html, base);
+  if (feedUrl) {
+    try {
+      const items = await extractRss(feedUrl);
+      if (items.length > 0) return items;
+    } catch { /**/ }
+  }
+
+  // ── 4. Scraping HTML : chercher des conteneurs article ──
+  const root = parse(html);
+
   for (const containerSel of AUTO_CONTAINERS) {
     const containers = root.querySelectorAll(containerSel);
     if (containers.length >= 2) {
@@ -52,7 +101,7 @@ export async function extractGeneric(
     }
   }
 
-  // ── Fallback : titre = og:title + liens internes structurés ──
+  // ── 5. Fallback : og:title + liens internes ──
   return extractFallback(root, base, sourceUrl);
 }
 
@@ -192,17 +241,17 @@ function extractFallback(root: HTMLElement, base: URL, sourceUrl: string): Extra
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function fetchHtml(url: string): Promise<string> {
+async function fetchRaw(url: string): Promise<{ html: string; contentType: string }> {
   const res = await fetch(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept": "text/html,application/xhtml+xml,application/xml,application/rss+xml,application/atom+xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
     },
     signal: AbortSignal.timeout(20_000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} sur ${url}`);
-  return res.text();
+  return { html: await res.text(), contentType: res.headers.get("content-type") ?? "" };
 }
 
 function resolveUrl(base: URL, href: string): string {
