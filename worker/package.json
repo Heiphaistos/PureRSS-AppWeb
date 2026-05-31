@@ -1,0 +1,19 @@
+{
+  "name": "purerss-worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply purerss-db"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "node-html-parser": "^6.1.13"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250525.0",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.15.2"
+  }
+}
