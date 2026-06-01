@@ -1,3 +1,7 @@
+import Database from "better-sqlite3";
+import fs from "fs";
+import path from "path";
+
 export interface FeedRow {
   id: string;
   name: string;
@@ -8,7 +12,7 @@ export interface FeedRow {
   selector_description: string | null;
   selector_date: string | null;
   refresh_interval: number;
-  enabled: number; // 0 | 1
+  enabled: number;
   created_at: string;
   last_fetched: string | null;
   item_count: number;
@@ -25,79 +29,112 @@ export interface ItemRow {
   fetched_at: string;
 }
 
-export interface Env {
-  DB: D1Database;
-  FRONTEND_ORIGIN: string;
+let _db: Database.Database;
+
+export function getDb(): Database.Database {
+  if (!_db) {
+    const dbPath = process.env.DB_PATH ?? "./data/purerss.db";
+    const dir = path.dirname(dbPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    _db = new Database(dbPath);
+    _db.pragma("journal_mode = WAL");
+    _db.pragma("foreign_keys = ON");
+    _initSchema(_db);
+  }
+  return _db;
 }
 
-// ─── Queries ─────────────────────────────────────────────────────────────────
-
-export async function getFeeds(db: D1Database): Promise<FeedRow[]> {
-  const { results } = await db
-    .prepare("SELECT * FROM feeds ORDER BY created_at DESC")
-    .all<FeedRow>();
-  return results;
+function _initSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS feeds (
+      id                   TEXT PRIMARY KEY,
+      name                 TEXT NOT NULL,
+      source_url           TEXT NOT NULL,
+      feed_type            TEXT NOT NULL DEFAULT 'generic',
+      selector_title       TEXT,
+      selector_link        TEXT,
+      selector_description TEXT,
+      selector_date        TEXT,
+      refresh_interval     INTEGER NOT NULL DEFAULT 30,
+      enabled              INTEGER NOT NULL DEFAULT 1,
+      created_at           TEXT NOT NULL,
+      last_fetched         TEXT,
+      item_count           INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS feed_items (
+      id          TEXT PRIMARY KEY,
+      feed_id     TEXT NOT NULL,
+      title       TEXT NOT NULL,
+      link        TEXT NOT NULL,
+      description TEXT,
+      pub_date    TEXT,
+      author      TEXT,
+      fetched_at  TEXT NOT NULL,
+      FOREIGN KEY(feed_id) REFERENCES feeds(id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_items_link    ON feed_items(feed_id, link);
+    CREATE        INDEX IF NOT EXISTS idx_items_fetched ON feed_items(feed_id, fetched_at DESC);
+  `);
 }
 
-export async function getFeed(db: D1Database, id: string): Promise<FeedRow | null> {
-  return db.prepare("SELECT * FROM feeds WHERE id = ?").bind(id).first<FeedRow>();
+export function getFeeds(): FeedRow[] {
+  return getDb().prepare("SELECT * FROM feeds ORDER BY created_at DESC").all() as FeedRow[];
 }
 
-export async function insertFeed(db: D1Database, feed: FeedRow): Promise<void> {
-  await db.prepare(`
+export function getFeed(id: string): FeedRow | null {
+  return getDb().prepare("SELECT * FROM feeds WHERE id = ?").get(id) as FeedRow | null;
+}
+
+export function insertFeed(feed: FeedRow): void {
+  getDb().prepare(`
     INSERT OR REPLACE INTO feeds
       (id, name, source_url, feed_type, selector_title, selector_link,
        selector_description, selector_date, refresh_interval, enabled,
        created_at, last_fetched, item_count)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `).bind(
+  `).run(
     feed.id, feed.name, feed.source_url, feed.feed_type,
     feed.selector_title, feed.selector_link, feed.selector_description, feed.selector_date,
-    feed.refresh_interval, feed.enabled, feed.created_at, feed.last_fetched, feed.item_count
-  ).run();
-}
-
-export async function deleteFeed(db: D1Database, id: string): Promise<void> {
-  await db.prepare("DELETE FROM feeds WHERE id = ?").bind(id).run();
-}
-
-export async function toggleFeed(db: D1Database, id: string, enabled: boolean): Promise<void> {
-  await db.prepare("UPDATE feeds SET enabled = ? WHERE id = ?").bind(enabled ? 1 : 0, id).run();
-}
-
-export async function updateFeedStats(
-  db: D1Database, id: string, lastFetched: string, itemCount: number
-): Promise<void> {
-  await db
-    .prepare("UPDATE feeds SET last_fetched = ?, item_count = ? WHERE id = ?")
-    .bind(lastFetched, itemCount, id)
-    .run();
-}
-
-export async function upsertItems(db: D1Database, items: ItemRow[]): Promise<number> {
-  if (items.length === 0) return 0;
-  let inserted = 0;
-  const stmts = items.map(item =>
-    db.prepare(`
-      INSERT OR IGNORE INTO feed_items
-        (id, feed_id, title, link, description, pub_date, author, fetched_at)
-      VALUES (?,?,?,?,?,?,?,?)
-    `).bind(item.id, item.feed_id, item.title, item.link,
-            item.description, item.pub_date, item.author, item.fetched_at)
+    feed.refresh_interval, feed.enabled, feed.created_at, feed.last_fetched, feed.item_count,
   );
-  // Batch de 20 max (limite D1)
-  for (let i = 0; i < stmts.length; i += 20) {
-    const batch = stmts.slice(i, i + 20);
-    const results = await db.batch(batch);
-    inserted += results.filter(r => r.meta.changes > 0).length;
-  }
-  return inserted;
 }
 
-export async function getItems(db: D1Database, feedId: string, limit = 50): Promise<ItemRow[]> {
-  const { results } = await db
+export function deleteFeed(id: string): void {
+  getDb().prepare("DELETE FROM feeds WHERE id = ?").run(id);
+}
+
+export function toggleFeed(id: string, enabled: boolean): void {
+  getDb().prepare("UPDATE feeds SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
+}
+
+export function updateFeedStats(id: string, lastFetched: string, itemCount: number): void {
+  getDb().prepare("UPDATE feeds SET last_fetched = ?, item_count = ? WHERE id = ?")
+    .run(lastFetched, itemCount, id);
+}
+
+export function upsertItems(items: ItemRow[]): number {
+  if (items.length === 0) return 0;
+  const insert = getDb().prepare(`
+    INSERT OR IGNORE INTO feed_items
+      (id, feed_id, title, link, description, pub_date, author, fetched_at)
+    VALUES (?,?,?,?,?,?,?,?)
+  `);
+  const upsertMany = getDb().transaction((rows: ItemRow[]) => {
+    let inserted = 0;
+    for (const item of rows) {
+      const result = insert.run(
+        item.id, item.feed_id, item.title, item.link,
+        item.description, item.pub_date, item.author, item.fetched_at,
+      );
+      if (result.changes > 0) inserted++;
+    }
+    return inserted;
+  });
+  return upsertMany(items) as number;
+}
+
+export function getItems(feedId: string, limit = 50): ItemRow[] {
+  return getDb()
     .prepare("SELECT * FROM feed_items WHERE feed_id = ? ORDER BY fetched_at DESC LIMIT ?")
-    .bind(feedId, limit)
-    .all<ItemRow>();
-  return results;
+    .all(feedId, limit) as ItemRow[];
 }

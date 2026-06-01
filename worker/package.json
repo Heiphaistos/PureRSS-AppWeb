@@ -3,17 +3,21 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "db:migrate": "wrangler d1 migrations apply purerss-db"
+    "dev": "tsx watch src/server.ts",
+    "build": "tsup src/server.ts --format cjs --out-dir dist --no-splitting",
+    "start": "node dist/server.js"
   },
   "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "better-sqlite3": "^11.10.0",
     "hono": "^4.7.0",
     "node-html-parser": "^6.1.13"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250525.0",
-    "typescript": "^5.8.3",
-    "wrangler": "^4.15.2"
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3"
   }
 }

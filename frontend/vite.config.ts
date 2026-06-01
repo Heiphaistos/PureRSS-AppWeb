@@ -5,6 +5,6 @@ export default defineConfig({
   plugins: [vue()],
   define: {
     // L'URL du Worker est définie à la build (CF Pages env var)
-    __API_URL__: JSON.stringify(process.env.VITE_API_URL ?? "http://localhost:8787"),
+    __API_URL__: JSON.stringify(process.env.VITE_API_URL ?? "http://localhost:3002"),
   },
 });

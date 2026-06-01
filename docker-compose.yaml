@@ -1,0 +1,44 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_URL: https://purerss.heiphaistos.org
+    container_name: purerss_frontend
+    restart: unless-stopped
+    networks:
+      - purerss-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: purerss_backend
+    restart: unless-stopped
+    environment:
+      - PORT=3002
+      - DB_PATH=/app/data/purerss.db
+    volumes:
+      - ./data:/app/data
+    networks:
+      - purerss-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: purerss_nginx
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    volumes:
+      - ./nginx-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - purerss-network
+
+networks:
+  purerss-network:
+    driver: bridge
+    name: purerss-network

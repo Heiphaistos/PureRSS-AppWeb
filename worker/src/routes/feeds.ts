@@ -1,15 +1,13 @@
 import { Hono } from "hono";
-import type { Env } from "../db/schema.ts";
-import * as db from "../db/schema.ts";
-import { extractGeneric } from "../extractors/generic.ts";
-import { extractYoutube } from "../extractors/youtube.ts";
-import { extractSocial } from "../extractors/social.ts";
-import { extractRss } from "../extractors/rss.ts";
-import { buildRss } from "../rss/builder.ts";
+import * as db from "../db/schema";
+import { extractGeneric } from "../extractors/generic";
+import { extractYoutube } from "../extractors/youtube";
+import { extractSocial } from "../extractors/social";
+import { extractRss } from "../extractors/rss";
+import { buildRss } from "../rss/builder";
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono();
 
-// Zod n'est pas disponible dans Workers sans bundler — validation manuelle simple
 function validateAddFeed(body: unknown): {
   name: string; source_url: string; feed_type: string;
   selector_title?: string; selector_link?: string;
@@ -36,9 +34,8 @@ function validateAddFeed(body: unknown): {
 }
 
 // GET /api/feeds
-app.get("/", async (c) => {
-  const feeds = await db.getFeeds(c.env.DB);
-  return c.json(feeds);
+app.get("/", (c) => {
+  return c.json(db.getFeeds());
 });
 
 // POST /api/feeds
@@ -67,32 +64,32 @@ app.post("/", async (c) => {
     item_count: 0,
   };
 
-  await db.insertFeed(c.env.DB, feed);
+  db.insertFeed(feed);
   return c.json(feed, 201);
 });
 
 // DELETE /api/feeds/:id
-app.delete("/:id", async (c) => {
+app.delete("/:id", (c) => {
   const id = c.req.param("id");
-  const feed = await db.getFeed(c.env.DB, id);
+  const feed = db.getFeed(id);
   if (!feed) return c.json({ error: "Flux non trouvé" }, 404);
-  await db.deleteFeed(c.env.DB, id);
+  db.deleteFeed(id);
   return c.json({ ok: true });
 });
 
 // PATCH /api/feeds/:id/toggle
-app.patch("/:id/toggle", async (c) => {
+app.patch("/:id/toggle", (c) => {
   const id = c.req.param("id");
-  const feed = await db.getFeed(c.env.DB, id);
+  const feed = db.getFeed(id);
   if (!feed) return c.json({ error: "Flux non trouvé" }, 404);
-  await db.toggleFeed(c.env.DB, id, feed.enabled === 0);
+  db.toggleFeed(id, feed.enabled === 0);
   return c.json({ ok: true, enabled: feed.enabled === 0 });
 });
 
 // POST /api/feeds/:id/refresh
 app.post("/:id/refresh", async (c) => {
   const id = c.req.param("id");
-  const feed = await db.getFeed(c.env.DB, id);
+  const feed = db.getFeed(id);
   if (!feed) return c.json({ error: "Flux non trouvé" }, 404);
 
   let extracted;
@@ -128,26 +125,25 @@ app.post("/:id/refresh", async (c) => {
     fetched_at: now,
   }));
 
-  const inserted = await db.upsertItems(c.env.DB, items);
-  await db.updateFeedStats(c.env.DB, id, now, items.length);
+  const inserted = db.upsertItems(items);
+  db.updateFeedStats(id, now, items.length);
 
   return c.json({ ok: true, total: items.length, inserted });
 });
 
 // GET /api/feeds/:id/items
-app.get("/:id/items", async (c) => {
+app.get("/:id/items", (c) => {
   const id = c.req.param("id");
   const limit = parseInt(c.req.query("limit") ?? "50");
-  const items = await db.getItems(c.env.DB, id, isNaN(limit) ? 50 : limit);
-  return c.json(items);
+  return c.json(db.getItems(id, isNaN(limit) ? 50 : limit));
 });
 
-// GET /feed/:id (RSS XML)
-app.get("/:id/rss", async (c) => {
+// GET /api/feeds/:id/rss
+app.get("/:id/rss", (c) => {
   const id = c.req.param("id");
-  const feed = await db.getFeed(c.env.DB, id);
+  const feed = db.getFeed(id);
   if (!feed) return c.text("Flux non trouvé", 404);
-  const items = await db.getItems(c.env.DB, id, 50);
+  const items = db.getItems(id, 50);
   const xml = buildRss(feed, items);
   return new Response(xml, {
     headers: { "Content-Type": "application/rss+xml; charset=utf-8" },
