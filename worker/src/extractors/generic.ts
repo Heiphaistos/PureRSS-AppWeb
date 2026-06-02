@@ -1,5 +1,6 @@
 import { parse, type HTMLElement } from "node-html-parser";
 import { extractRss, parseAnyFeed } from "./rss.ts";
+import { assertPublicUrl } from "../utils/ssrf";
 
 export interface ExtractedItem {
   title: string;
@@ -20,7 +21,6 @@ function isRssContentType(ct: string): boolean {
   return RSS_CONTENT_TYPES.some(t => ct.toLowerCase().includes(t));
 }
 
-// Cherche <link rel="alternate" type="application/rss+xml|atom+xml" href="...">
 function discoverFeedUrl(html: string, base: URL): string | null {
   const re = /<link[^>]+rel=["']alternate["'][^>]+>/gi;
   for (const match of html.matchAll(re)) {
@@ -30,7 +30,6 @@ function discoverFeedUrl(html: string, base: URL): string | null {
     if (!href) continue;
     try { return new URL(href, base).toString(); } catch { /**/ }
   }
-  // Aussi chercher sans rel="alternate" explicite
   const re2 = /<link[^>]+type=["'](application\/(rss|atom)\+xml|text\/xml)["'][^>]*>/gi;
   for (const match of html.matchAll(re2)) {
     const href = match[0].match(/href=["']([^"']+)["']/i)?.[1];
@@ -40,23 +39,13 @@ function discoverFeedUrl(html: string, base: URL): string | null {
   return null;
 }
 
-// Patterns testés en ordre pour auto-détecter les articles
 const AUTO_CONTAINERS = [
-  "article",
-  ".post",
-  ".entry",
-  ".article",
-  ".card",
-  ".item",
-  ".news-item",
-  ".blog-post",
-  ".feed-item",
-  "li.post",
-  "li.entry",
+  "article", ".post", ".entry", ".article", ".card", ".item",
+  ".news-item", ".blog-post", ".feed-item", "li.post", "li.entry",
 ];
 
-const TITLE_SELECTORS   = ["h1 a", "h2 a", "h3 a", ".title a", ".post-title a", ".entry-title a", "h1", "h2", "h3"];
-const DESC_SELECTORS    = [".excerpt", ".summary", ".description", ".intro", ".content p", "p"];
+const TITLE_SELECTORS = ["h1 a", "h2 a", "h3 a", ".title a", ".post-title a", ".entry-title a", "h1", "h2", "h3"];
+const DESC_SELECTORS  = [".excerpt", ".summary", ".description", ".intro", ".content p", "p"];
 
 export async function extractGeneric(
   sourceUrl: string,
@@ -65,23 +54,19 @@ export async function extractGeneric(
   selectorDescription?: string,
   selectorDate?: string,
 ): Promise<ExtractedItem[]> {
-  // ── 1. Fetch (détecter si déjà un flux RSS/Atom) ──
+  assertPublicUrl(sourceUrl);
   const { html, contentType } = await fetchRaw(sourceUrl);
 
-  if (isRssContentType(contentType)) {
-    return parseAnyFeed(html);
-  }
+  if (isRssContentType(contentType)) return parseAnyFeed(html);
 
   const base = new URL(sourceUrl);
   const isDefault = selectorTitle === "h2 a" && selectorLink === "h2 a";
 
-  // ── 2. Sélecteurs custom fournis par l'utilisateur ──
   if (!isDefault) {
     const root = parse(html);
     return extractWithSelectors(root, base, selectorTitle, selectorLink, selectorDescription, selectorDate);
   }
 
-  // ── 3. Autodiscovery RSS/Atom natif ──
   const feedUrl = discoverFeedUrl(html, base);
   if (feedUrl) {
     try {
@@ -90,9 +75,7 @@ export async function extractGeneric(
     } catch { /**/ }
   }
 
-  // ── 4. Scraping HTML : chercher des conteneurs article ──
   const root = parse(html);
-
   for (const containerSel of AUTO_CONTAINERS) {
     const containers = root.querySelectorAll(containerSel);
     if (containers.length >= 2) {
@@ -101,67 +84,46 @@ export async function extractGeneric(
     }
   }
 
-  // ── 5. Fallback : og:title + liens internes ──
   return extractFallback(root, base, sourceUrl);
 }
 
-// ─── Extraction avec sélecteurs CSS ──────────────────────────────────────────
-
 function extractWithSelectors(
-  root: HTMLElement,
-  base: URL,
-  selTitle: string,
-  selLink: string,
-  selDesc?: string,
-  selDate?: string,
+  root: HTMLElement, base: URL,
+  selTitle: string, selLink: string, selDesc?: string, selDate?: string,
 ): ExtractedItem[] {
   const titleEls = root.querySelectorAll(selTitle);
   const linkEls  = root.querySelectorAll(selLink);
   const descEls  = selDesc ? root.querySelectorAll(selDesc) : [];
   const dateEls  = selDate ? root.querySelectorAll(selDate) : [];
-
   const items: ExtractedItem[] = [];
   const seen = new Set<string>();
-
   for (let i = 0; i < Math.min(titleEls.length, linkEls.length); i++) {
     const title = titleEls[i].text.trim();
     const href  = linkEls[i].getAttribute("href") ?? linkEls[i].text.trim();
     if (!title || !href) continue;
-
     const link = resolveUrl(base, href);
     if (seen.has(link)) continue;
     seen.add(link);
-
-    const description = descEls[i]?.text.trim() || undefined;
-    const pub_date    = dateEls[i]?.getAttribute("datetime") || dateEls[i]?.text.trim() || undefined;
-
-    items.push({ title, link, description, pub_date });
+    items.push({
+      title, link,
+      description: descEls[i]?.text.trim() || undefined,
+      pub_date: dateEls[i]?.getAttribute("datetime") || dateEls[i]?.text.trim() || undefined,
+    });
   }
   return items;
 }
 
-// ─── Extraction depuis des conteneurs article ─────────────────────────────────
-
 function extractFromContainers(containers: HTMLElement[], base: URL, selDate?: string): ExtractedItem[] {
   const items: ExtractedItem[] = [];
   const seen = new Set<string>();
-
   for (const container of containers) {
-    // Titre + lien
-    let title = "";
-    let link  = "";
-
+    let title = "", link = "";
     for (const sel of TITLE_SELECTORS) {
       const el = container.querySelector(sel);
       if (!el) continue;
       const t = el.text.trim();
       const h = el.getAttribute("href") ?? el.querySelector("a")?.getAttribute("href") ?? "";
-      if (t && h) {
-        title = t;
-        link  = resolveUrl(base, h);
-        break;
-      }
-      // Titre sans lien — chercher un <a> dans le conteneur
+      if (t && h) { title = t; link = resolveUrl(base, h); break; }
       if (t && !h) {
         title = t;
         const a = container.querySelector("a");
@@ -169,13 +131,9 @@ function extractFromContainers(containers: HTMLElement[], base: URL, selDate?: s
         if (title && link) break;
       }
     }
-
     if (!title || !link || seen.has(link)) continue;
-    // Exclure liens de navigation
     if (isNavigationLink(link, base)) continue;
     seen.add(link);
-
-    // Description : chercher le premier paragraphe ou excerpt
     let description: string | undefined;
     for (const sel of DESC_SELECTORS) {
       const el = container.querySelector(sel);
@@ -187,8 +145,6 @@ function extractFromContainers(containers: HTMLElement[], base: URL, selDate?: s
         }
       }
     }
-
-    // Date
     let pub_date: string | undefined;
     if (selDate) {
       const el = container.querySelector(selDate);
@@ -197,34 +153,25 @@ function extractFromContainers(containers: HTMLElement[], base: URL, selDate?: s
       const timeEl = container.querySelector("time");
       pub_date = timeEl?.getAttribute("datetime") || timeEl?.text.trim() || undefined;
     }
-
     items.push({ title, link, description, pub_date });
   }
   return items;
 }
 
-// ─── Fallback : og:description + liens h2/h3 ─────────────────────────────────
-
 function extractFallback(root: HTMLElement, base: URL, sourceUrl: string): ExtractedItem[] {
   const seen = new Set<string>();
   const items: ExtractedItem[] = [];
-
-  // Chercher tous les liens qui ressemblent à des articles
   const anchors = root.querySelectorAll("h2 a, h3 a, h4 a, .title a");
   for (const a of anchors) {
     const title = a.text.trim();
     const href  = a.getAttribute("href") ?? "";
     if (!title || !href) continue;
-
     const link = resolveUrl(base, href);
     if (!link.startsWith("http") || seen.has(link)) continue;
     if (isNavigationLink(link, base)) continue;
     seen.add(link);
-
     items.push({ title, link });
   }
-
-  // Si toujours rien, retourner une entrée générique avec og:title/description
   if (items.length === 0) {
     const ogTitle = root.querySelector("meta[property='og:title']")?.getAttribute("content")
                  ?? root.querySelector("title")?.text.trim()
@@ -232,14 +179,10 @@ function extractFallback(root: HTMLElement, base: URL, sourceUrl: string): Extra
     const ogDesc  = root.querySelector("meta[property='og:description']")?.getAttribute("content")
                  ?? root.querySelector("meta[name='description']")?.getAttribute("content")
                  ?? undefined;
-
     items.push({ title: ogTitle, link: sourceUrl, description: ogDesc });
   }
-
   return items;
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function fetchRaw(url: string): Promise<{ html: string; contentType: string }> {
   const res = await fetch(url, {
@@ -261,13 +204,16 @@ function resolveUrl(base: URL, href: string): string {
   return href;
 }
 
+function rootDomain(hostname: string): string {
+  const parts = hostname.split(".");
+  return parts.length >= 2 ? parts.slice(-2).join(".") : hostname;
+}
+
 function isNavigationLink(link: string, base: URL): boolean {
   try {
     const u = new URL(link);
-    // Même page ou ancre
     if (u.pathname === "/" || u.pathname === base.pathname) return true;
-    // Domaine différent (liens externes probablement pas des articles)
-    if (u.hostname !== base.hostname) return true;
+    if (rootDomain(u.hostname) !== rootDomain(base.hostname)) return true;
     return false;
   } catch {
     return false;

@@ -1,6 +1,8 @@
 import type { ExtractedItem } from "./generic.ts";
+import { assertPublicUrl } from "../utils/ssrf";
 
 export async function extractYoutube(sourceUrl: string): Promise<ExtractedItem[]> {
+  assertPublicUrl(sourceUrl);
   const rssUrl = await resolveRssUrl(sourceUrl);
   return fetchYoutubeRss(rssUrl);
 }
@@ -49,15 +51,11 @@ async function fetchYoutubeRss(rssUrl: string): Promise<ExtractedItem[]> {
     const desc      = extractMediaDescription(body);
     const pub_date  = extractSimpleTag(body, "published");
     const author    = extractSimpleTag(body, "name");
-    const thumbnail = extractAttrVal(body, "media:thumbnail", "url");
 
-    return { title, link, description: desc, pub_date, author, thumbnail } as ExtractedItem & { thumbnail?: string };
+    return { title, link, description: desc, pub_date, author };
   }).filter(item => !!item.link);
 }
 
-// ── Helpers XML ───────────────────────────────────────────────────────────────
-
-// Extrait du contenu CDATA ou texte brut d'une balise
 function extractCdata(xml: string, tag: string): string | undefined {
   const re = new RegExp(`<${escRe(tag)}[^>]*>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*</${escRe(tag)}>`, "i");
   return xml.match(re)?.[1]?.trim();
@@ -67,7 +65,6 @@ function extractSimpleTag(xml: string, tag: string): string | undefined {
   const re = new RegExp(`<${escRe(tag)}[^>]*>([\\s\\S]*?)</${escRe(tag)}>`, "i");
   const m  = xml.match(re);
   if (!m) return undefined;
-  // Nettoyer CDATA si présent
   return m[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim() || undefined;
 }
 
@@ -76,19 +73,13 @@ function extractAttrVal(xml: string, tag: string, attr: string): string | undefi
   return xml.match(re)?.[1];
 }
 
-// media:description est dans media:group — on cherche dans tout le body
 function extractMediaDescription(body: string): string | undefined {
-  // Chercher le bloc media:group
   const groupMatch = body.match(/<media:group>([\s\S]*?)<\/media:group>/i);
   const searchIn   = groupMatch?.[1] ?? body;
-
-  // Chercher media:description (avec ou sans CDATA)
   const cdataMatch = searchIn.match(/<media:description[^>]*>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*<\/media:description>/i);
   if (cdataMatch?.[1]?.trim()) return truncate(cdataMatch[1].trim(), 400);
-
   const plainMatch = searchIn.match(/<media:description[^>]*>([\s\S]*?)<\/media:description>/i);
   if (plainMatch?.[1]?.trim()) return truncate(plainMatch[1].trim(), 400);
-
   return undefined;
 }
 

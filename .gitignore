@@ -1,6 +1,8 @@
-node_modules/
-dist/
-.wrangler/
 *.local
 .env
 .env.*
+.logs/
+.wrangler/
+dist/
+node_modules/
+data/

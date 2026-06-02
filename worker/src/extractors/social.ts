@@ -1,6 +1,8 @@
 import type { ExtractedItem } from "./generic.ts";
+import { assertPublicUrl } from "../utils/ssrf";
 
 export async function extractSocial(sourceUrl: string): Promise<ExtractedItem[]> {
+  assertPublicUrl(sourceUrl);
   if (sourceUrl.includes("instagram.com"))  return extractInstagram(sourceUrl);
   if (sourceUrl.includes("tiktok.com"))     return extractTiktok(sourceUrl);
   if (sourceUrl.includes("facebook.com"))   return extractFacebook(sourceUrl);
@@ -11,7 +13,6 @@ async function extractInstagram(url: string): Promise<ExtractedItem[]> {
   const usernameMatch = url.match(/instagram\.com\/([^/?#]+)/);
   const username = usernameMatch?.[1] ?? "unknown";
 
-  // Instagram API non officielle (comptes publics uniquement)
   const apiUrl = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`;
 
   const res = await fetch(apiUrl, {
@@ -50,18 +51,16 @@ async function extractTiktok(url: string): Promise<ExtractedItem[]> {
   const usernameMatch = url.match(/tiktok\.com\/@([^/?#]+)/);
   const username = usernameMatch?.[1] ?? "unknown";
 
-  // TikTok bloque agressivement le scraping — on retourne un item d'info
   return [{
     title: `TikTok @${username} — Flux non disponible`,
     link: url,
-    description: `TikTok bloque le scraping depuis des serveurs. Utilisez un service comme RSS.app ou nitter pour ce compte. URL: ${url}`,
+    description: `TikTok bloque le scraping depuis des serveurs. Utilisez un service comme RSS.app ou nitter pour ce compte.`,
     pub_date: new Date().toUTCString(),
     author: username,
   }];
 }
 
 async function extractFacebook(url: string): Promise<ExtractedItem[]> {
-  // Facebook bloque quasi-totalement les requêtes non authentifiées
   const res = await fetch(url, {
     headers: {
       "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
@@ -70,9 +69,12 @@ async function extractFacebook(url: string): Promise<ExtractedItem[]> {
     signal: AbortSignal.timeout(20_000),
   });
 
+  if (!res.ok) {
+    throw new Error(`Facebook: HTTP ${res.status} — contenu non accessible`);
+  }
+
   const html = await res.text();
 
-  // Extraire les og: meta tags
   const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/);
   const descMatch  = html.match(/<meta property="og:description" content="([^"]+)"/);
 

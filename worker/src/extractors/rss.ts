@@ -1,6 +1,8 @@
 import type { ExtractedItem } from "./generic.ts";
+import { assertPublicUrl } from "../utils/ssrf";
 
 export async function extractRss(rssUrl: string): Promise<ExtractedItem[]> {
+  assertPublicUrl(rssUrl);
   const res = await fetch(rssUrl, {
     headers: {
       "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
@@ -14,21 +16,16 @@ export async function extractRss(rssUrl: string): Promise<ExtractedItem[]> {
 }
 
 export function parseAnyFeed(xml: string): ExtractedItem[] {
-  // Atom
   if (/<feed[\s>]/i.test(xml) && /<entry[\s>]/i.test(xml)) return parseAtom(xml);
-  // RSS 2.0 / RSS 1.0
   return parseRss2(xml);
 }
-
-// ── RSS 2.0 ───────────────────────────────────────────────────────────────────
 
 function parseRss2(xml: string): ExtractedItem[] {
   const items = [...xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/gi)];
   return items.map(([, body]) => {
     const title  = cdataOrTag(body, "title") ?? "Sans titre";
     const link   = rssLink(body);
-    const desc   = cdataOrTag(body, "content:encoded")
-                ?? cdataOrTag(body, "description");
+    const desc   = cdataOrTag(body, "content:encoded") ?? cdataOrTag(body, "description");
     const pub_date = simpleTag(body, "pubDate") ?? simpleTag(body, "dc:date");
     const author   = cdataOrTag(body, "author") ?? cdataOrTag(body, "dc:creator");
     return {
@@ -41,24 +38,17 @@ function parseRss2(xml: string): ExtractedItem[] {
   }).filter(i => !!i.link);
 }
 
-// Gère <link>url</link> (RSS) et <link href="..."/> (mixte)
 function rssLink(body: string): string {
-  // Chercher <link> texte (RSS 2.0 standard)
   const textLink = body.match(/<link[^>]*>([^<]+)<\/link>/i)?.[1]?.trim();
   if (textLink && textLink.startsWith("http")) return textLink;
-  // Chercher <link href="..."> (certains flux mixtes)
   const attrLink = body.match(/<link[^>]*\shref="([^"]+)"/i)?.[1];
   if (attrLink) return attrLink;
-  // Chercher <guid isPermaLink="true">
   const guid = body.match(/<guid[^>]*isPermaLink="true"[^>]*>([^<]+)<\/guid>/i)?.[1]?.trim();
   if (guid && guid.startsWith("http")) return guid;
-  // guid sans attribut souvent = URL
   const guidPlain = body.match(/<guid[^>]*>([^<]+)<\/guid>/i)?.[1]?.trim();
   if (guidPlain?.startsWith("http")) return guidPlain;
   return "";
 }
-
-// ── Atom ──────────────────────────────────────────────────────────────────────
 
 function parseAtom(xml: string): ExtractedItem[] {
   const entries = [...xml.matchAll(/<entry[\s>]([\s\S]*?)<\/entry>/gi)];
@@ -70,7 +60,7 @@ function parseAtom(xml: string): ExtractedItem[] {
                 ?? "";
     const desc   = cdataOrTag(body, "content") ?? cdataOrTag(body, "summary");
     const pub_date = simpleTag(body, "published") ?? simpleTag(body, "updated");
-    const author   = simpleTag(body, "name"); // <author><name>
+    const author   = simpleTag(body, "name");
     return {
       title,
       link,
@@ -81,14 +71,10 @@ function parseAtom(xml: string): ExtractedItem[] {
   }).filter(i => !!i.link);
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 function cdataOrTag(xml: string, tag: string): string | undefined {
   const esc = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(":", "\\:");
-  // CDATA
   const c = xml.match(new RegExp(`<${esc}[^>]*>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*<\/${esc}>`, "i"));
   if (c?.[1]?.trim()) return c[1].trim();
-  // texte brut
   const t = xml.match(new RegExp(`<${esc}[^>]*>([^<]*)<\/${esc}>`, "i"));
   return t?.[1]?.trim() || undefined;
 }

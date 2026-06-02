@@ -1,6 +1,13 @@
-// URL du Worker CF — injectée par Vite depuis VITE_API_URL
 declare const __API_URL__: string;
 export const API = __API_URL__;
+
+function getApiKey(): string {
+  return localStorage.getItem("purerss-api-key") ?? "";
+}
+
+export function setApiKey(key: string): void {
+  localStorage.setItem("purerss-api-key", key);
+}
 
 export interface FeedConfig {
   id: string;
@@ -30,8 +37,12 @@ export interface FeedItem {
 }
 
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
+  const key = getApiKey();
   const res = await fetch(`${API}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(key ? { "X-API-Key": key } : {}),
+    },
     ...options,
   });
   if (!res.ok) {
