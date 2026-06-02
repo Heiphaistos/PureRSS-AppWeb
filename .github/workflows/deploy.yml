@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -16,7 +17,4 @@ jobs:
 
       - name: Deploy via SSH
         run: |
-          ssh -i /tmp/deploy_key \
-            -o StrictHostKeyChecking=no \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "cd /opt/purerss && git pull origin main && docker compose up -d --build && docker compose ps"
+          ssh -i /tmp/deploy_key             -o StrictHostKeyChecking=no             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}             "cd /opt/purerss && git pull origin main && docker compose up -d --build && docker compose ps"
