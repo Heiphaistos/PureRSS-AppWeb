@@ -23,6 +23,7 @@ export interface FeedConfig {
   created_at: string;
   last_fetched: string | null;
   item_count: number;
+  discord_webhook: string | null;
 }
 
 export interface FeedItem {
@@ -39,10 +40,7 @@ export interface FeedItem {
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
   const key = getApiKey();
   const res = await fetch(`${API}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(key ? { "X-API-Key": key } : {}),
-    },
+    headers: { "Content-Type": "application/json", ...(key ? { "X-API-Key": key } : {}) },
     ...options,
   });
   if (!res.ok) {
@@ -53,11 +51,15 @@ async function req<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  getFeeds:    () => req<FeedConfig[]>("/api/feeds"),
-  addFeed:     (body: object) => req<FeedConfig>("/api/feeds", { method: "POST", body: JSON.stringify(body) }),
-  deleteFeed:  (id: string) => req<{ ok: boolean }>(`/api/feeds/${id}`, { method: "DELETE" }),
-  toggleFeed:  (id: string) => req<{ ok: boolean; enabled: boolean }>(`/api/feeds/${id}/toggle`, { method: "PATCH" }),
-  refreshFeed: (id: string) => req<{ ok: boolean; total: number; inserted: number }>(`/api/feeds/${id}/refresh`, { method: "POST" }),
-  getItems:    (id: string, limit = 50) => req<FeedItem[]>(`/api/feeds/${id}/items?limit=${limit}`),
-  rssUrl:      (id: string) => `${API}/feed/${id}`,
+  getFeeds:      () => req<FeedConfig[]>("/api/feeds"),
+  addFeed:       (body: object) => req<FeedConfig>("/api/feeds", { method: "POST", body: JSON.stringify(body) }),
+  updateFeed:    (id: string, body: object) => req<FeedConfig>(`/api/feeds/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteFeed:    (id: string) => req<{ ok: boolean }>(`/api/feeds/${id}`, { method: "DELETE" }),
+  toggleFeed:    (id: string) => req<{ ok: boolean; enabled: boolean }>(`/api/feeds/${id}/toggle`, { method: "PATCH" }),
+  refreshFeed:   (id: string) => req<{ ok: boolean; total: number; inserted: number }>(`/api/feeds/${id}/refresh`, { method: "POST" }),
+  getItems:      (id: string, limit = 50) => req<FeedItem[]>(`/api/feeds/${id}/items?limit=${limit}`),
+  updateWebhook: (id: string, discord_webhook: string | null) =>
+    req<{ ok: boolean }>(`/api/feeds/${id}/webhook`, { method: "PATCH", body: JSON.stringify({ discord_webhook }) }),
+  testWebhook:   (id: string) => req<{ ok: boolean }>(`/api/feeds/${id}/test-webhook`, { method: "POST" }),
+  rssUrl:        (id: string) => `${API}/feed/${id}`,
 };

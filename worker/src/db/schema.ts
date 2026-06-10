@@ -16,6 +16,7 @@ export interface FeedRow {
   created_at: string;
   last_fetched: string | null;
   item_count: number;
+  discord_webhook: string | null;
 }
 
 export interface ItemRow {
@@ -75,6 +76,10 @@ function _initSchema(db: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_items_link    ON feed_items(feed_id, link);
     CREATE        INDEX IF NOT EXISTS idx_items_fetched ON feed_items(feed_id, fetched_at DESC);
   `);
+  const cols = db.prepare("PRAGMA table_info(feeds)").all() as { name: string }[];
+  if (!cols.some(c => c.name === "discord_webhook")) {
+    db.exec("ALTER TABLE feeds ADD COLUMN discord_webhook TEXT");
+  }
 }
 
 export function getFeeds(): FeedRow[] {
@@ -87,15 +92,32 @@ export function getFeed(id: string): FeedRow | null {
 
 export function insertFeed(feed: FeedRow): void {
   getDb().prepare(`
-    INSERT OR REPLACE INTO feeds
+    INSERT INTO feeds
       (id, name, source_url, feed_type, selector_title, selector_link,
        selector_description, selector_date, refresh_interval, enabled,
-       created_at, last_fetched, item_count)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+       created_at, last_fetched, item_count, discord_webhook)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     feed.id, feed.name, feed.source_url, feed.feed_type,
     feed.selector_title, feed.selector_link, feed.selector_description, feed.selector_date,
-    feed.refresh_interval, feed.enabled, feed.created_at, feed.last_fetched, feed.item_count,
+    feed.refresh_interval, feed.enabled, feed.created_at, feed.last_fetched,
+    feed.item_count, feed.discord_webhook,
+  );
+}
+
+export function updateFeed(feed: FeedRow): void {
+  getDb().prepare(`
+    UPDATE feeds SET
+      name = ?, source_url = ?, feed_type = ?,
+      selector_title = ?, selector_link = ?,
+      selector_description = ?, selector_date = ?,
+      refresh_interval = ?, discord_webhook = ?
+    WHERE id = ?
+  `).run(
+    feed.name, feed.source_url, feed.feed_type,
+    feed.selector_title, feed.selector_link, feed.selector_description, feed.selector_date,
+    feed.refresh_interval, feed.discord_webhook,
+    feed.id,
   );
 }
 
@@ -112,29 +134,48 @@ export function updateFeedStats(id: string, lastFetched: string, itemCount: numb
     .run(lastFetched, itemCount, id);
 }
 
-export function upsertItems(items: ItemRow[]): number {
-  if (items.length === 0) return 0;
+export function updateDiscordWebhook(id: string, webhook: string | null): void {
+  getDb().prepare("UPDATE feeds SET discord_webhook = ? WHERE id = ?").run(webhook, id);
+}
+
+export function upsertItems(items: ItemRow[]): { count: number; newItems: ItemRow[] } {
+  if (items.length === 0) return { count: 0, newItems: [] };
   const insert = getDb().prepare(`
     INSERT OR IGNORE INTO feed_items
       (id, feed_id, title, link, description, pub_date, author, fetched_at)
     VALUES (?,?,?,?,?,?,?,?)
   `);
   const upsertMany = getDb().transaction((rows: ItemRow[]) => {
-    let inserted = 0;
+    const newItems: ItemRow[] = [];
     for (const item of rows) {
       const result = insert.run(
         item.id, item.feed_id, item.title, item.link,
         item.description, item.pub_date, item.author, item.fetched_at,
       );
-      if (result.changes > 0) inserted++;
+      if (result.changes > 0) newItems.push(item);
     }
-    return inserted;
+    return newItems;
   });
-  return upsertMany(items) as number;
+  const newItems = upsertMany(items) as ItemRow[];
+  return { count: newItems.length, newItems };
+}
+
+export function getTotalItemCount(feedId: string): number {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) as cnt FROM feed_items WHERE feed_id = ?")
+    .get(feedId) as { cnt: number };
+  return row.cnt;
 }
 
 export function getItems(feedId: string, limit = 50): ItemRow[] {
   return getDb()
-    .prepare("SELECT * FROM feed_items WHERE feed_id = ? ORDER BY fetched_at DESC LIMIT ?")
+    .prepare(`
+      SELECT * FROM feed_items
+      WHERE feed_id = ?
+      ORDER BY
+        CASE WHEN pub_date LIKE '____-__-__%' THEN pub_date ELSE fetched_at END DESC,
+        fetched_at DESC
+      LIMIT ?
+    `)
     .all(feedId, limit) as ItemRow[];
 }
