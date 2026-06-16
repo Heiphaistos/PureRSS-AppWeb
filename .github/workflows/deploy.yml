@@ -20,4 +20,5 @@ jobs:
           ssh -i /tmp/deploy_key \
             -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "cd /opt/purerss && git stash && git pull origin main && docker compose up -d --build && docker compose ps"
+            "cd /opt/purerss && git stash && git fetch origin main
+            git reset --hard FETCH_HEAD && docker compose up -d --build && docker compose ps"
