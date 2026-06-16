@@ -7,8 +7,8 @@ import app from "./index";
 getDb();
 
 const port = parseInt(process.env.PORT ?? "3002");
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`[PureRSS] API running on http://localhost:${info.port}`);
+serve({ fetch: app.fetch, port, hostname: "0.0.0.0" }, (info) => {
+  console.log(`[PureRSS] API running on http://0.0.0.0:${info.port}`);
   startAutoRefresh();
 });
 
