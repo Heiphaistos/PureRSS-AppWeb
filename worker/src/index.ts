@@ -3,6 +3,8 @@ import { cors } from "hono/cors";
 import * as db from "./db/schema";
 import { buildRss } from "./rss/builder";
 import feedsRouter from "./routes/feeds";
+import authRouter from "./routes/auth";
+import { requireAuth } from "./middleware/jwt";
 
 const ALLOWED_ORIGINS = new Set([
   "https://purerss.heiphaistos.org",
@@ -11,7 +13,6 @@ const ALLOWED_ORIGINS = new Set([
   "http://127.0.0.1:5173",
 ]);
 
-// ── Rate limiter ──────────────────────────────────────────────────────────────
 const rateLimitMap = new Map<string, { count: number; reset: number }>();
 
 function checkRateLimit(ip: string, max = 60, windowMs = 60_000): boolean {
@@ -33,38 +34,23 @@ setInterval(() => {
 
 const app = new Hono();
 
-// ── CORS ──────────────────────────────────────────────────────────────────────
 app.use("*", cors({
   origin: (origin) => (!origin ? null : ALLOWED_ORIGINS.has(origin) ? origin : null),
   allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  allowHeaders: ["Content-Type", "X-API-Key"],
+  allowHeaders: ["Content-Type", "Authorization"],
 }));
 
-// ── Rate limiting ─────────────────────────────────────────────────────────────
 app.use("*", async (c, next) => {
   const ip = c.req.header("x-forwarded-for")?.split(",")[0].trim()
-           ?? c.req.header("x-real-ip")
-           ?? "unknown";
+           ?? c.req.header("x-real-ip") ?? "unknown";
   if (!checkRateLimit(ip)) return c.json({ error: "Trop de requêtes" }, 429);
-  await next();
+  return await next();
 });
 
-// ── API key auth (mutations uniquement) ───────────────────────────────────────
-const API_KEY = process.env.API_KEY ?? "";
+// Routes auth — publiques
+app.route("/api/auth", authRouter);
 
-app.use("/api/*", async (c, next) => {
-  if (!API_KEY || ["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
-    await next();
-    return;
-  }
-  const key = c.req.header("x-api-key") ?? "";
-  if (key !== API_KEY) return c.json({ error: "Clé API invalide" }, 401);
-  await next();
-});
-
-// ── Routes ────────────────────────────────────────────────────────────────────
-app.route("/api/feeds", feedsRouter);
-
+// Flux RSS public (lecture seule, sans auth)
 app.get("/feed/:id", (c) => {
   const id = c.req.param("id");
   const feed = db.getFeed(id);
@@ -74,7 +60,16 @@ app.get("/feed/:id", (c) => {
   return new Response(xml, { headers: { "Content-Type": "application/rss+xml; charset=utf-8" } });
 });
 
-app.get("/health", (c) => c.json({ ok: true, service: "PureRSS", version: "1.1.0" }));
+// GET feeds — public (pour lecteurs RSS externes)
+app.get("/api/feeds", (c) => feedsRouter.fetch(c.req.raw));
+app.get("/api/feeds/:id/items", (c) => feedsRouter.fetch(c.req.raw));
+app.get("/api/feeds/:id/rss", (c) => feedsRouter.fetch(c.req.raw));
+
+// Toutes les autres routes feeds — JWT requis
+app.use("/api/feeds/*", requireAuth);
+app.route("/api/feeds", feedsRouter);
+
+app.get("/health", (c) => c.json({ ok: true, service: "PureRSS", version: "1.2.0" }));
 app.notFound((c) => c.json({ error: "Route non trouvée" }, 404));
 
 export default app;

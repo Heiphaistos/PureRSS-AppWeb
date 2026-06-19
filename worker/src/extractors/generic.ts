@@ -1,5 +1,5 @@
 import { parse, type HTMLElement } from "node-html-parser";
-import { extractRss, parseAnyFeed } from "./rss.ts";
+import { extractRss, parseAnyFeed } from "./rss";
 import { assertPublicUrl } from "../utils/ssrf";
 
 export interface ExtractedItem {
