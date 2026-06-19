@@ -84,16 +84,36 @@ async function importFeeds(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (!file) return;
   dataMsg.value = null;
+
+  // Limite de taille : 2 MB
+  if (file.size > 2 * 1024 * 1024) {
+    dataMsg.value = { text: "Fichier trop volumineux (max 2 MB).", ok: false };
+    return;
+  }
+
   try {
     const text = await file.text();
-    const data = JSON.parse(text) as { feeds: object[] };
-    if (!Array.isArray(data.feeds)) throw new Error("Format invalide");
+    const data = JSON.parse(text) as { feeds?: unknown[] };
+    if (!data || !Array.isArray(data.feeds)) throw new Error("Format invalide");
+    if (data.feeds.length > 500) throw new Error("Trop de flux (max 500)");
+
     let imported = 0;
     for (const feed of data.feeds) {
-      try { await api.addFeed(feed); imported++; } catch { /* skip existing */ }
+      if (typeof feed !== "object" || feed === null) continue;
+      const f = feed as Record<string, unknown>;
+      const safe = {
+        name: String(f.name ?? "").slice(0, 100),
+        source_url: String(f.source_url ?? ""),
+        feed_type: ["generic", "youtube", "social"].includes(String(f.feed_type)) ? f.feed_type : "generic",
+        refresh_interval: Number(f.refresh_interval) || 30,
+      };
+      if (!safe.source_url.startsWith("http")) continue;
+      try { await api.addFeed(safe); imported++; } catch { /* skip existing */ }
     }
-    dataMsg.value = { text: `${imported} flux importés.`, ok: true };
-  } catch (e) { dataMsg.value = { text: (e as Error).message, ok: false }; }
+    dataMsg.value = { text: imported + " flux importes.", ok: true };
+  } catch (e) {
+    dataMsg.value = { text: (e as Error).message || "Erreur lors de l import.", ok: false };
+  }
 }
 
 // ── Logout ────────────────────────────────────────────

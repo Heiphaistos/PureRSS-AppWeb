@@ -249,6 +249,15 @@ function formatDate(d: string | null): string {
 function goHome() {
   (window as Window & typeof globalThis).location.href = '/';
 }
+
+function safeHref(url: string | null | undefined): string {
+  if (!url) return "#";
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "https:" || parsed.protocol === "http:") return url;
+  } catch { /* invalid URL */ }
+  return "#";
+}
 </script>
 
 <template>
@@ -383,7 +392,7 @@ function goHome() {
           </div>
           <article v-for="item in feedItems" :key="item.id" class="item-card">
             <div class="item-header">
-              <h3 class="item-title"><a :href="item.link" target="_blank" rel="noopener noreferrer">{{ item.title }}</a></h3>
+              <h3 class="item-title"><a :href="safeHref(item.link)" target="_blank" rel="noopener noreferrer">{{ item.title }}</a></h3>
               <span class="item-date">{{ formatDate(item.pub_date || item.fetched_at) }}</span>
             </div>
             <p v-if="item.description" class="item-desc">
@@ -391,7 +400,7 @@ function goHome() {
             </p>
             <div class="item-footer">
               <span v-if="item.author" class="item-author">{{ item.author }}</span>
-              <a :href="item.link" target="_blank" rel="noopener noreferrer" class="item-link">Lire →</a>
+              <a :href="safeHref(item.link)" target="_blank" rel="noopener noreferrer" class="item-link">Lire →</a>
             </div>
           </article>
         </div>
