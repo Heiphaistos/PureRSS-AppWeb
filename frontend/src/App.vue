@@ -1,6 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { api, setApiKey, type FeedConfig, type FeedItem } from "./api.ts";
+import { api, type FeedConfig, type FeedItem } from "./api.ts";
+import { useAuth } from "./composables/useAuth.ts";
+import { useTheme } from "./composables/useTheme.ts";
+import LoginView from "./views/LoginView.vue";
+import ResetPasswordView from "./views/ResetPasswordView.vue";
+import SettingsView from "./views/SettingsView.vue";
+
+const { user, authLoading, init: initAuth, logout } = useAuth();
+const { initTheme } = useTheme();
+
+const isResetPage = computed(() =>
+  window.location.pathname.includes("reset-password") || window.location.search.includes("token=")
+);
 
 // ── Type metadata ──────────────────────────────────────────────────────────
 interface TypeMeta { label: string; color: string; group: string; }
@@ -51,8 +63,6 @@ const notification = ref<{ msg: string; type: "success" | "error" } | null>(null
 const showModal    = ref(false);
 const showSettings = ref(false);
 const editingFeedId    = ref<string | null>(null);
-const apiKeyInput      = ref("");
-const apiKeyConfigured = ref(false);
 const discordEnabled   = ref(false);
 const collapsedGroups  = ref<string[]>([]);
 
@@ -82,12 +92,13 @@ const feedGroups = computed(() => {
 
 // ── Lifecycle ──────────────────────────────────────────────────────────────
 onMounted(async () => {
-  const k = localStorage.getItem("purerss-api-key") ?? "";
-  apiKeyInput.value = k;
-  apiKeyConfigured.value = !!k;
+  initTheme();
+  await initAuth();
   discordEnabled.value = localStorage.getItem("purerss-discord-enabled") === "true";
-  try { await loadFeeds(); }
-  catch (e) { notify(`Connexion impossible: ${(e as Error).message}`, "error"); }
+  if (user.value) {
+    try { await loadFeeds(); }
+    catch (e) { notify(`Connexion impossible: ${(e as Error).message}`, "error"); }
+  }
 });
 
 // ── Actions ────────────────────────────────────────────────────────────────
@@ -107,7 +118,6 @@ async function selectFeed(feed: FeedConfig) {
 }
 
 async function refreshFeed(feedId: string) {
-  if (!apiKeyConfigured.value) { showSettings.value = true; notify("Configurez votre clé API (⚙)", "error"); return; }
   refreshingId.value = feedId;
   try {
     const r = await api.refreshFeed(feedId);
@@ -217,12 +227,15 @@ function maskWebhook(url: string): string {
 }
 
 function saveSettings() {
-  const k = apiKeyInput.value.trim();
-  setApiKey(k);
-  apiKeyConfigured.value = !!k;
-  localStorage.setItem("purerss-discord-enabled", discordEnabled.value ? "true" : "false");
+  localStorage.setItem("purerss-discord-enabled", String(discordEnabled.value));
   showSettings.value = false;
-  notify("Paramètres enregistrés ✓", "success");
+}
+
+function handleLogout() {
+  logout();
+  feeds.value = [];
+  selectedFeed.value = null;
+  feedItems.value = [];
 }
 
 function notify(msg: string, type: "success" | "error") {
@@ -238,12 +251,36 @@ function formatDate(d: string | null): string {
 </script>
 
 <template>
-  <div class="app">
+  <!-- Reset password via URL token -->
+  <ResetPasswordView
+    v-if="isResetPage"
+    @done="() => { window.location.href = '/'; }"
+  />
+
+  <!-- Chargement auth -->
+  <div v-else-if="authLoading" class="auth-loading">
+    <span>⟳</span>
+  </div>
+
+  <!-- Non connecté → login -->
+  <LoginView
+    v-else-if="!user"
+    @authenticated="async () => { await loadFeeds(); }"
+  />
+
+  <!-- Paramètres -->
+  <SettingsView
+    v-else-if="showSettings"
+    @close="showSettings = false"
+    @logout="handleLogout"
+  />
+
+  <!-- App principale -->
+  <div v-else class="app">
     <aside class="sidebar">
       <div class="sidebar-header">
         <div class="logo-area"><span class="logo-icon">📡</span><span class="logo-text">PureRSS</span></div>
         <div class="sidebar-header-actions">
-          <span v-if="!apiKeyConfigured" class="key-warning" title="Clé API non configurée">⚠</span>
           <button class="icon-btn" @click="showSettings = true" title="Paramètres">⚙</button>
         </div>
       </div>
@@ -363,10 +400,6 @@ function formatDate(d: string | null): string {
         <div class="welcome-icon">📡</div>
         <h2>PureRSS</h2>
         <p>Générateur de flux RSS depuis n'importe quelle source web</p>
-        <div v-if="!apiKeyConfigured" class="api-key-banner">
-          <span>⚠ Clé API non configurée</span>
-          <button class="btn-secondary btn-sm" @click="showSettings = true">Configurer →</button>
-        </div>
         <div class="welcome-tips">
           <div class="tip"><span class="tip-icon">🌐</span><div><strong>Sites web</strong><br>Blogs, actualités avec sélecteurs CSS</div></div>
           <div class="tip"><span class="tip-icon">▶️</span><div><strong>YouTube / Twitch</strong><br>Flux RSS natif depuis une chaîne</div></div>
@@ -456,40 +489,6 @@ function formatDate(d: string | null): string {
       </div>
     </Teleport>
 
-    <!-- Modal Paramètres -->
-    <Teleport to="body">
-      <div v-if="showSettings" class="modal-overlay" @click.self="showSettings = false">
-        <div class="modal modal-sm">
-          <div class="modal-header">
-            <h3>⚙ Paramètres</h3>
-            <button class="icon-btn" @click="showSettings = false">✕</button>
-          </div>
-          <div class="modal-form">
-            <div class="form-row">
-              <label>Clé API
-                <span :class="apiKeyConfigured ? 'key-ok' : 'key-missing-label'">
-                  {{ apiKeyConfigured ? '(configurée ✓)' : '(non configurée)' }}
-                </span>
-              </label>
-              <input v-model="apiKeyInput" type="password" placeholder="Entrez la clé API du serveur…" autocomplete="off" />
-              <small class="form-hint">Requise pour toutes les modifications. Stockée dans votre navigateur.</small>
-            </div>
-            <div class="form-row">
-              <label class="toggle-row">
-                <input type="checkbox" v-model="discordEnabled" class="toggle-check" />
-                <span class="toggle-text">Activer les webhooks Discord</span>
-              </label>
-              <small class="form-hint">Affiche le panneau webhook sur chaque flux. Désactivez si vous utilisez rssdi pour la diffusion Discord.</small>
-            </div>
-            <div class="modal-actions">
-              <button type="button" class="btn-secondary" @click="showSettings = false">Annuler</button>
-              <button type="button" class="btn-primary" @click="saveSettings">Enregistrer</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
     <Teleport to="body">
       <div v-if="notification" :class="['notification', notification.type]">{{ notification.msg }}</div>
     </Teleport>
@@ -519,7 +518,6 @@ html, body { height: 100%; }
 .logo-icon { font-size: 20px; }
 .logo-text { font-size: 16px; font-weight: 700; color: var(--accent); }
 .sidebar-header-actions { display: flex; align-items: center; gap: 4px; }
-.key-warning { color: var(--yellow); font-size: 15px; cursor: help; }
 .btn-add { margin: 12px; padding: 8px 12px; background: var(--accent); color: #0d1117; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; transition: background .2s; }
 .btn-add:hover { background: var(--accent-hover); }
 .feeds-list { flex: 1; overflow-y: auto; padding: 4px 4px; }
@@ -604,7 +602,6 @@ html, body { height: 100%; }
 .welcome-icon { font-size: 56px; }
 .welcome h2 { font-size: 24px; }
 .welcome > p { color: var(--text-muted); }
-.api-key-banner { display: flex; align-items: center; gap: 12px; background: rgba(240,180,41,.08); border: 1px solid rgba(240,180,41,.3); padding: 10px 16px; border-radius: 8px; color: var(--yellow); font-size: 13px; flex-wrap: wrap; justify-content: center; }
 .welcome-tips { display: flex; gap: 16px; margin: 8px 0; flex-wrap: wrap; justify-content: center; }
 .tip { display: flex; align-items: flex-start; gap: 10px; background: var(--bg2); border: 1px solid var(--border); padding: 14px; border-radius: 10px; max-width: 180px; text-align: left; }
 .tip-icon { font-size: 20px; }
@@ -629,8 +626,6 @@ html, body { height: 100%; }
 .form-row { display: flex; flex-direction: column; gap: 5px; }
 .form-row label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
 .optional { font-weight: 400; }
-.key-ok { color: var(--green); font-size: 11px; font-weight: 400; }
-.key-missing-label { color: var(--red); font-size: 11px; font-weight: 400; }
 .form-hint { font-size: 11px; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
 .form-row input, .form-row select { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: var(--text); font-size: 13px; outline: none; transition: border-color .15s; width: 100%; }
 .form-row input:focus, .form-row select:focus { border-color: var(--accent); }
@@ -649,4 +644,10 @@ html, body { height: 100%; }
 .spinning { animation: spin .8s linear infinite; display: inline-block; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .empty-state, .empty-items { padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px; line-height: 1.7; }
+
+.auth-loading {
+  height: 100vh; display: flex; align-items: center; justify-content: center;
+  font-size: 32px; color: var(--text-muted); background: var(--bg);
+  animation: spin 1s linear infinite;
+}
 </style>
