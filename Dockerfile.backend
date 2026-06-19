@@ -8,13 +8,14 @@ RUN npm run build
 
 FROM node:20-alpine
 WORKDIR /app
-RUN apk add --no-cache libstdc++
+RUN apk add --no-cache libstdc++ python3 make g++ sqlite-dev
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+RUN npm install --production --ignore-scripts && npm rebuild better-sqlite3
 RUN chown -R appuser:appgroup /app
 USER appuser
 EXPOSE 3002
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:3002/health || exit 1
+  CMD wget -qO- http://127.0.0.1:3002/health || exit 1
 CMD ["node", "dist/server.js"]

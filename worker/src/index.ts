@@ -60,13 +60,15 @@ app.get("/feed/:id", (c) => {
   return new Response(xml, { headers: { "Content-Type": "application/rss+xml; charset=utf-8" } });
 });
 
-// GET feeds — public (pour lecteurs RSS externes)
-app.get("/api/feeds", (c) => feedsRouter.fetch(c.req.raw));
-app.get("/api/feeds/:id/items", (c) => feedsRouter.fetch(c.req.raw));
-app.get("/api/feeds/:id/rss", (c) => feedsRouter.fetch(c.req.raw));
-
-// Toutes les autres routes feeds — JWT requis
-app.use("/api/feeds/*", requireAuth);
+// Middleware conditionnel : JWT requis sauf pour GET
+app.use("/api/feeds", async (c, next) => {
+  if (c.req.method !== "GET") return requireAuth(c, next);
+  return next();
+});
+app.use("/api/feeds/*", async (c, next) => {
+  if (c.req.method !== "GET") return requireAuth(c, next);
+  return next();
+});
 app.route("/api/feeds", feedsRouter);
 
 app.get("/health", (c) => c.json({ ok: true, service: "PureRSS", version: "1.2.0" }));

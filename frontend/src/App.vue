@@ -226,10 +226,7 @@ function maskWebhook(url: string): string {
   return m ? m[1] + "●●●●●●●●" : url.slice(0, 45) + "…";
 }
 
-function saveSettings() {
-  localStorage.setItem("purerss-discord-enabled", String(discordEnabled.value));
-  showSettings.value = false;
-}
+
 
 function handleLogout() {
   logout();
@@ -248,13 +245,17 @@ function formatDate(d: string | null): string {
   try { return new Date(d).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }); }
   catch { return d; }
 }
+
+function goHome() {
+  (window as Window & typeof globalThis).location.href = '/';
+}
 </script>
 
 <template>
   <!-- Reset password via URL token -->
   <ResetPasswordView
     v-if="isResetPage"
-    @done="() => { window.location.href = '/'; }"
+    @done="goHome"
   />
 
   <!-- Chargement auth -->
