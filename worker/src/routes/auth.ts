@@ -26,7 +26,7 @@ app.post("/register", async (c) => {
   if (users.getUserByUsername(username)) return c.json({ error: "Nom d'utilisateur déjà pris" }, 409);
   const isFirst = users.countUsers() === 0;
   const user = await users.createUser(email, username, password, isFirst ? "admin" : "user");
-  const token = await signJwt({ sub: user.id, email: user.email, username: user.username, role: user.role });
+  const token = await signJwt({ sub: user.id, email: user.email, username: user.username, role: user.role, tokenVersion: user.token_version });
   return c.json({ token, user: { id: user.id, email: user.email, username: user.username, role: user.role } }, 201);
 });
 
@@ -42,7 +42,7 @@ app.post("/login", async (c) => {
   if (!user || !(await users.verifyPassword(user, password)))
     return c.json({ error: "Email ou mot de passe incorrect" }, 401);
   users.updateLastLogin(user.id);
-  const token = await signJwt({ sub: user.id, email: user.email, username: user.username, role: user.role });
+  const token = await signJwt({ sub: user.id, email: user.email, username: user.username, role: user.role, tokenVersion: user.token_version ?? 0 });
   return c.json({ token, user: { id: user.id, email: user.email, username: user.username, role: user.role } });
 });
 
@@ -52,6 +52,13 @@ app.get("/me", requireAuth, (c) => {
   const user = users.getUserById(u.sub);
   if (!user) return c.json({ error: "Utilisateur non trouvé" }, 404);
   return c.json({ id: user.id, email: user.email, username: user.username, role: user.role, last_login: user.last_login, created_at: user.created_at });
+});
+
+// POST /api/auth/logout
+app.post("/logout", requireAuth, (c) => {
+  const u = c.get("user") as JwtPayload;
+  users.incrementTokenVersion(u.sub);
+  return c.json({ ok: true });
 });
 
 // POST /api/auth/forgot-password
@@ -82,6 +89,8 @@ app.post("/reset-password", async (c) => {
   const userId = users.consumeResetToken(token);
   if (!userId) return c.json({ error: "Token invalide ou expiré" }, 400);
   await users.updatePassword(userId, password);
+  // Invalider tous les tokens existants après reset
+  users.incrementTokenVersion(userId);
   return c.json({ ok: true, message: "Mot de passe mis à jour avec succès." });
 });
 
@@ -99,7 +108,15 @@ app.patch("/change-password", requireAuth, async (c) => {
   if (!user || !(await users.verifyPassword(user, current)))
     return c.json({ error: "Mot de passe actuel incorrect" }, 401);
   await users.updatePassword(u.sub, next);
-  return c.json({ ok: true });
+  // Invalider tous les tokens existants (autres sessions)
+  users.incrementTokenVersion(u.sub);
+  // Réémettre un nouveau token pour la session courante
+  const updatedUser = users.getUserById(u.sub)!;
+  const newToken = await signJwt({
+    sub: u.sub, email: updatedUser.email, username: updatedUser.username,
+    role: updatedUser.role, tokenVersion: updatedUser.token_version,
+  });
+  return c.json({ ok: true, token: newToken });
 });
 
 // PATCH /api/auth/change-email

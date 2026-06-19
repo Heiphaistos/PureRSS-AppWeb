@@ -10,6 +10,7 @@ export interface UserRow {
   role: "user" | "admin";
   created_at: string;
   last_login: string | null;
+  token_version: number;
 }
 
 export function getUserByEmail(email: string): UserRow | null {
@@ -39,11 +40,12 @@ export async function createUser(email: string, username: string, password: stri
     role,
     created_at: new Date().toISOString(),
     last_login: null,
+    token_version: 0,
   };
   getDb().prepare(`
-    INSERT INTO users (id, email, username, password_hash, role, created_at, last_login)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(user.id, user.email, user.username, user.password_hash, user.role, user.created_at, user.last_login);
+    INSERT INTO users (id, email, username, password_hash, role, created_at, last_login, token_version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(user.id, user.email, user.username, user.password_hash, user.role, user.created_at, user.last_login, user.token_version);
   return user;
 }
 
@@ -62,6 +64,15 @@ export function updateEmail(userId: string, newEmail: string): void {
 
 export function updateLastLogin(userId: string): void {
   getDb().prepare("UPDATE users SET last_login = ? WHERE id = ?").run(new Date().toISOString(), userId);
+}
+
+export function incrementTokenVersion(userId: string): void {
+  getDb().prepare("UPDATE users SET token_version = token_version + 1 WHERE id = ?").run(userId);
+}
+
+export function getTokenVersion(userId: string): number {
+  const row = getDb().prepare("SELECT token_version FROM users WHERE id = ?").get(userId) as { token_version: number } | null;
+  return row?.token_version ?? 0;
 }
 
 export function createResetToken(userId: string): string {

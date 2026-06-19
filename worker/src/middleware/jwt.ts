@@ -1,5 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
 import type { Context, Next } from "hono";
+import * as users from "../db/users";
 
 const SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET ?? "changeme-in-prod-32chars-minimum"
@@ -12,6 +13,7 @@ export interface JwtPayload {
   email: string;
   username: string;
   role: "user" | "admin";
+  tokenVersion: number;
 }
 
 export async function signJwt(payload: JwtPayload): Promise<string> {
@@ -37,6 +39,11 @@ export async function requireAuth(c: Context, next: Next): Promise<Response | vo
   if (!token) return c.json({ error: "Non authentifié" }, 401);
   const payload = await verifyJwt(token);
   if (!payload) return c.json({ error: "Token invalide ou expiré" }, 401);
+  // Vérifier que le token n'a pas été révoqué (logout ou changement de mot de passe)
+  const currentVersion = users.getTokenVersion(payload.sub);
+  if (payload.tokenVersion !== currentVersion) {
+    return c.json({ error: "Session expirée, veuillez vous reconnecter" }, 401);
+  }
   c.set("user", payload);
   await next();
 }

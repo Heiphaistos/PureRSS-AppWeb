@@ -4,8 +4,11 @@ import { assertPublicUrl } from "../utils/ssrf";
 import { doRefreshFeed } from "../utils/refresh";
 import { buildRss } from "../rss/builder";
 import { sendTestEmbed } from "../utils/discord";
+import { requireAuth } from "../middleware/jwt";
+import type { JwtPayload } from "../middleware/jwt";
 
-const app = new Hono();
+type Vars = { Variables: { user: JwtPayload } };
+const app = new Hono<Vars>();
 
 const VALID_TYPES = [
   "generic", "rss", "youtube", "social",
@@ -57,9 +60,15 @@ function validateFeedBody(body: unknown): ValidatedFeed {
   };
 }
 
-app.get("/", (c) => c.json(db.getFeeds()));
+// GET / — liste des feeds de l'utilisateur authentifié
+app.get("/", requireAuth, (c) => {
+  const owner = c.get("user");
+  return c.json(db.getFeeds(owner.sub));
+});
 
-app.post("/", async (c) => {
+// POST / — créer un feed (auth requise)
+app.post("/", requireAuth, async (c) => {
+  const owner = c.get("user");
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: "JSON invalide" }, 400); }
   let v: ValidatedFeed;
@@ -72,36 +81,46 @@ app.post("/", async (c) => {
     refresh_interval: v.refresh_interval, enabled: 1,
     created_at: new Date().toISOString(), last_fetched: null, item_count: 0,
     discord_webhook: v.discord_webhook,
+    owner_id: owner.sub,
   };
   db.insertFeed(feed);
   return c.json(feed, 201);
 });
 
-app.patch("/:id/toggle", (c) => {
-  const id = c.req.param("id");
-  const feed = db.getFeed(id);
-  if (!feed) return c.json({ error: "Flux non trouvé" }, 404);
-  db.toggleFeed(id, feed.enabled === 0);
+// PATCH /:id/toggle — auth requise + ownership
+app.patch("/:id/toggle", requireAuth, (c) => {
+  const owner = c.get("user");
+  const id = c.req.param("id") ?? "";
+  if (!id) return c.json({ error: "ID manquant" }, 400);
+  const feed = db.getFeed(id, owner.sub);
+  if (!feed) return c.json({ error: "Flux non trouvé ou accès refusé" }, 404);
+  db.toggleFeed(id, owner.sub, feed.enabled === 0);
   return c.json({ ok: true, enabled: feed.enabled === 0 });
 });
 
-app.patch("/:id/webhook", async (c) => {
-  const id = c.req.param("id");
-  const feed = db.getFeed(id);
-  if (!feed) return c.json({ error: "Flux non trouvé" }, 404);
+// PATCH /:id/webhook — auth requise + ownership
+app.patch("/:id/webhook", requireAuth, async (c) => {
+  const owner = c.get("user");
+  const id = c.req.param("id") ?? "";
+  if (!id) return c.json({ error: "ID manquant" }, 400);
+  const feed = db.getFeed(id, owner.sub);
+  if (!feed) return c.json({ error: "Flux non trouvé ou accès refusé" }, 404);
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: "JSON invalide" }, 400); }
   const raw = typeof (body as Record<string, unknown>).discord_webhook === "string"
     ? ((body as Record<string, unknown>).discord_webhook as string).trim() : "";
   if (raw && !isDiscordWebhookUrl(raw)) return c.json({ error: "URL webhook Discord invalide" }, 400);
-  db.updateDiscordWebhook(id, raw || null);
+  db.updateDiscordWebhook(id, owner.sub, raw || null);
   return c.json({ ok: true });
 });
 
-app.patch("/:id", async (c) => {
-  const id = c.req.param("id");
-  const feed = db.getFeed(id);
-  if (!feed) return c.json({ error: "Flux non trouvé" }, 404);
+// PATCH /:id — auth requise + ownership
+app.patch("/:id", requireAuth, async (c) => {
+  const owner = c.get("user");
+  const id = c.req.param("id") ?? "";
+  if (!id) return c.json({ error: "ID manquant" }, 400);
+  const feed = db.getFeed(id, owner.sub);
+  if (!feed) return c.json({ error: "Flux non trouvé ou accès refusé" }, 404);
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: "JSON invalide" }, 400); }
   let v: ValidatedFeed;
@@ -114,21 +133,27 @@ app.patch("/:id", async (c) => {
     refresh_interval: v.refresh_interval,
     discord_webhook: v.discord_webhook,
   };
-  db.updateFeed(updated);
+  db.updateFeed(updated, owner.sub);
   return c.json(updated);
 });
 
-app.delete("/:id", (c) => {
-  const id = c.req.param("id");
-  if (!db.getFeed(id)) return c.json({ error: "Flux non trouvé" }, 404);
-  db.deleteFeed(id);
+// DELETE /:id — auth requise + ownership
+app.delete("/:id", requireAuth, (c) => {
+  const owner = c.get("user");
+  const id = c.req.param("id") ?? "";
+  if (!id) return c.json({ error: "ID manquant" }, 400);
+  const deleted = db.deleteFeed(id, owner.sub);
+  if (!deleted) return c.json({ error: "Flux non trouvé ou accès refusé" }, 404);
   return c.json({ ok: true });
 });
 
-app.post("/:id/test-webhook", async (c) => {
-  const id = c.req.param("id");
-  const feed = db.getFeed(id);
-  if (!feed) return c.json({ error: "Flux non trouvé" }, 404);
+// POST /:id/test-webhook — auth requise + ownership
+app.post("/:id/test-webhook", requireAuth, async (c) => {
+  const owner = c.get("user");
+  const id = c.req.param("id") ?? "";
+  if (!id) return c.json({ error: "ID manquant" }, 400);
+  const feed = db.getFeed(id, owner.sub);
+  if (!feed) return c.json({ error: "Flux non trouvé ou accès refusé" }, 404);
   if (!feed.discord_webhook) return c.json({ error: "Aucun webhook configuré pour ce flux" }, 400);
   try {
     await sendTestEmbed(feed.discord_webhook, feed.name);
@@ -136,26 +161,33 @@ app.post("/:id/test-webhook", async (c) => {
   } catch (e) { return c.json({ error: (e as Error).message }, 502); }
 });
 
-app.post("/:id/refresh", async (c) => {
-  const id = c.req.param("id");
-  const feed = db.getFeed(id);
-  if (!feed) return c.json({ error: "Flux non trouvé" }, 404);
+// POST /:id/refresh — auth requise + ownership
+app.post("/:id/refresh", requireAuth, async (c) => {
+  const owner = c.get("user");
+  const id = c.req.param("id") ?? "";
+  if (!id) return c.json({ error: "ID manquant" }, 400);
+  const feed = db.getFeed(id, owner.sub);
+  if (!feed) return c.json({ error: "Flux non trouvé ou accès refusé" }, 404);
   try {
     const result = await doRefreshFeed(feed);
     return c.json({ ok: true, ...result });
   } catch (e) { return c.json({ error: `Erreur scraping: ${(e as Error).message}` }, 502); }
 });
 
+// GET /:id/items — public (lecture seule)
 app.get("/:id/items", (c) => {
-  const id = c.req.param("id");
+  const id = c.req.param("id") ?? "";
+  if (!id) return c.json({ error: "ID manquant" }, 400);
   const rawLimit = parseInt(c.req.query("limit") ?? "50");
   const limit = isNaN(rawLimit) ? 50 : Math.min(Math.max(1, rawLimit), 200);
   return c.json(db.getItems(id, limit));
 });
 
+// GET /:id/rss — public (lecture seule)
 app.get("/:id/rss", (c) => {
-  const id = c.req.param("id");
-  const feed = db.getFeed(id);
+  const id = c.req.param("id") ?? "";
+  if (!id) return c.text("ID manquant", 400);
+  const feed = db.getFeedPublic(id);
   if (!feed) return c.text("Flux non trouvé", 404);
   const items = db.getItems(id, 50);
   const xml = buildRss(feed, items);

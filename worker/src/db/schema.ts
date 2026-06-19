@@ -17,6 +17,7 @@ export interface FeedRow {
   last_fetched: string | null;
   item_count: number;
   discord_webhook: string | null;
+  owner_id: string | null;
 }
 
 export interface ItemRow {
@@ -80,6 +81,14 @@ function _initSchema(db: Database.Database): void {
   if (!cols.some(c => c.name === "discord_webhook")) {
     db.exec("ALTER TABLE feeds ADD COLUMN discord_webhook TEXT");
   }
+  if (!cols.some(c => c.name === "owner_id")) {
+    db.exec("ALTER TABLE feeds ADD COLUMN owner_id TEXT");
+    // Attribuer les feeds existants sans owner au premier admin
+    const admin = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get() as { id: string } | null;
+    if (admin) {
+      db.prepare("UPDATE feeds SET owner_id = ? WHERE owner_id IS NULL").run(admin.id);
+    }
+  }
 
   // Users & reset tokens
   db.exec(`
@@ -100,13 +109,23 @@ function _initSchema(db: Database.Database): void {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
   `);
+
+  // Migration : ajouter token_version si absent
+  const userCols = db.prepare("PRAGMA table_info(users)").all() as { name: string }[];
+  if (!userCols.some(c => c.name === "token_version")) {
+    db.exec("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
-export function getFeeds(): FeedRow[] {
-  return getDb().prepare("SELECT * FROM feeds ORDER BY created_at DESC").all() as FeedRow[];
+export function getFeeds(ownerId: string): FeedRow[] {
+  return getDb().prepare("SELECT * FROM feeds WHERE owner_id = ? ORDER BY created_at DESC").all(ownerId) as FeedRow[];
 }
 
-export function getFeed(id: string): FeedRow | null {
+export function getFeed(id: string, ownerId: string): FeedRow | null {
+  return getDb().prepare("SELECT * FROM feeds WHERE id = ? AND owner_id = ?").get(id, ownerId) as FeedRow | null;
+}
+
+export function getFeedPublic(id: string): FeedRow | null {
   return getDb().prepare("SELECT * FROM feeds WHERE id = ?").get(id) as FeedRow | null;
 }
 
@@ -115,38 +134,39 @@ export function insertFeed(feed: FeedRow): void {
     INSERT INTO feeds
       (id, name, source_url, feed_type, selector_title, selector_link,
        selector_description, selector_date, refresh_interval, enabled,
-       created_at, last_fetched, item_count, discord_webhook)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       created_at, last_fetched, item_count, discord_webhook, owner_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     feed.id, feed.name, feed.source_url, feed.feed_type,
     feed.selector_title, feed.selector_link, feed.selector_description, feed.selector_date,
     feed.refresh_interval, feed.enabled, feed.created_at, feed.last_fetched,
-    feed.item_count, feed.discord_webhook,
+    feed.item_count, feed.discord_webhook, feed.owner_id,
   );
 }
 
-export function updateFeed(feed: FeedRow): void {
+export function updateFeed(feed: FeedRow, ownerId: string): void {
   getDb().prepare(`
     UPDATE feeds SET
       name = ?, source_url = ?, feed_type = ?,
       selector_title = ?, selector_link = ?,
       selector_description = ?, selector_date = ?,
       refresh_interval = ?, discord_webhook = ?
-    WHERE id = ?
+    WHERE id = ? AND owner_id = ?
   `).run(
     feed.name, feed.source_url, feed.feed_type,
     feed.selector_title, feed.selector_link, feed.selector_description, feed.selector_date,
     feed.refresh_interval, feed.discord_webhook,
-    feed.id,
+    feed.id, ownerId,
   );
 }
 
-export function deleteFeed(id: string): void {
-  getDb().prepare("DELETE FROM feeds WHERE id = ?").run(id);
+export function deleteFeed(id: string, ownerId: string): boolean {
+  const result = getDb().prepare("DELETE FROM feeds WHERE id = ? AND owner_id = ?").run(id, ownerId);
+  return result.changes > 0;
 }
 
-export function toggleFeed(id: string, enabled: boolean): void {
-  getDb().prepare("UPDATE feeds SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
+export function toggleFeed(id: string, ownerId: string, enabled: boolean): void {
+  getDb().prepare("UPDATE feeds SET enabled = ? WHERE id = ? AND owner_id = ?").run(enabled ? 1 : 0, id, ownerId);
 }
 
 export function updateFeedStats(id: string, lastFetched: string, itemCount: number): void {
@@ -154,8 +174,8 @@ export function updateFeedStats(id: string, lastFetched: string, itemCount: numb
     .run(lastFetched, itemCount, id);
 }
 
-export function updateDiscordWebhook(id: string, webhook: string | null): void {
-  getDb().prepare("UPDATE feeds SET discord_webhook = ? WHERE id = ?").run(webhook, id);
+export function updateDiscordWebhook(id: string, ownerId: string, webhook: string | null): void {
+  getDb().prepare("UPDATE feeds SET discord_webhook = ? WHERE id = ? AND owner_id = ?").run(webhook, id, ownerId);
 }
 
 export function upsertItems(items: ItemRow[]): { count: number; newItems: ItemRow[] } {
