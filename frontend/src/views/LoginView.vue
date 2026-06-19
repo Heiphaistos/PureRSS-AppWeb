@@ -53,8 +53,9 @@ async function doForgot() {
       </div>
 
       <div class="auth-tabs">
-        <button :class="['auth-tab', { active: tab === 'login' }]" @click="tab = 'login'; error = ''">Connexion</button>
-        <button :class="['auth-tab', { active: tab === 'register' }]" @click="tab = 'register'; error = ''">Créer un compte</button>
+        <button :class="['auth-tab', { active: tab === 'login' }]" @click="tab = 'login'; error = ''; success = ''">Connexion</button>
+        <button :class="['auth-tab', { active: tab === 'register' }]" @click="tab = 'register'; error = ''; success = ''">Créer un compte</button>
+        <button :class="['auth-tab', { active: tab === 'forgot' }]" @click="tab = 'forgot'; error = ''; success = ''">Mot de passe oublié</button>
       </div>
 
       <!-- Login -->
@@ -69,7 +70,6 @@ async function doForgot() {
         </div>
         <div v-if="error" class="auth-error">{{ error }}</div>
         <button type="submit" class="auth-submit" :disabled="loading">{{ loading ? "Connexion…" : "Se connecter" }}</button>
-        <button type="button" class="auth-link" @click="tab = 'forgot'; error = ''">Mot de passe oublié ?</button>
       </form>
 
       <!-- Register -->
@@ -105,7 +105,7 @@ async function doForgot() {
         <div v-if="error" class="auth-error">{{ error }}</div>
         <div v-if="success" class="auth-success">{{ success }}</div>
         <button type="submit" class="auth-submit" :disabled="loading">{{ loading ? "Envoi…" : "Envoyer le lien" }}</button>
-        <button type="button" class="auth-link" @click="tab = 'login'; error = ''">← Retour à la connexion</button>
+        <button type="button" class="auth-link" @click="tab = 'login'; error = ''; success = ''">← Retour à la connexion</button>
       </form>
     </div>
   </div>
