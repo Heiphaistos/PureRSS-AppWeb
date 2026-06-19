@@ -7,7 +7,7 @@ export interface UserRow {
   email: string;
   username: string;
   password_hash: string;
-  role: string;
+  role: "user" | "admin";
   created_at: string;
   last_login: string | null;
 }
@@ -29,7 +29,7 @@ export function countUsers(): number {
   return row.cnt;
 }
 
-export async function createUser(email: string, username: string, password: string, role = "user"): Promise<UserRow> {
+export async function createUser(email: string, username: string, password: string, role: "user" | "admin" = "user"): Promise<UserRow> {
   const password_hash = await bcrypt.hash(password, 12);
   const user: UserRow = {
     id: crypto.randomUUID(),
@@ -74,10 +74,15 @@ export function createResetToken(userId: string): string {
 }
 
 export function consumeResetToken(token: string): string | null {
+  const now = new Date().toISOString();
+  // Recupere le user_id avant d'invalider pour pouvoir le retourner
   const row = getDb().prepare(`
-    SELECT * FROM reset_tokens WHERE token = ? AND used = 0 AND expires_at > ?
-  `).get(token, new Date().toISOString()) as { user_id: string } | null;
+    SELECT user_id FROM reset_tokens WHERE token = ? AND used = 0 AND expires_at > ?
+  `).get(token, now) as { user_id: string } | null;
   if (!row) return null;
-  getDb().prepare("UPDATE reset_tokens SET used = 1 WHERE token = ?").run(token);
-  return row.user_id;
+  // UPDATE atomique -- si used=1 entre-temps, changes=0 et on rejette
+  const result = getDb().prepare(
+    "UPDATE reset_tokens SET used = 1 WHERE token = ? AND used = 0"
+  ).run(token);
+  return result.changes > 0 ? row.user_id : null;
 }
