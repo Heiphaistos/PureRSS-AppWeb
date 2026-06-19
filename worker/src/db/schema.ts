@@ -80,6 +80,26 @@ function _initSchema(db: Database.Database): void {
   if (!cols.some(c => c.name === "discord_webhook")) {
     db.exec("ALTER TABLE feeds ADD COLUMN discord_webhook TEXT");
   }
+
+  // Users & reset tokens
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id            TEXT PRIMARY KEY,
+      email         TEXT NOT NULL UNIQUE,
+      username      TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role          TEXT NOT NULL DEFAULT 'user',
+      created_at    TEXT NOT NULL,
+      last_login    TEXT
+    );
+    CREATE TABLE IF NOT EXISTS reset_tokens (
+      token      TEXT PRIMARY KEY,
+      user_id    TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used       INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+  `);
 }
 
 export function getFeeds(): FeedRow[] {
