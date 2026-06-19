@@ -16,7 +16,7 @@ export async function sendPasswordResetEmail(to: string, resetUrl: string): Prom
   const transporter = createTransporter();
   const from = process.env.SMTP_FROM ?? process.env.SMTP_USER ?? "noreply@purerss.local";
   if (!transporter) {
-    console.log(`[EMAIL] Reset link for ${to}: ${resetUrl}`);
+    console.log("[EMAIL DEV] Reset demande pour: " + to + " - configurer SMTP pour envoyer l'email");
     return;
   }
   await transporter.sendMail({

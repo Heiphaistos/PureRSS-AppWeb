@@ -20,8 +20,8 @@ app.post("/register", async (c) => {
     return c.json({ error: "Email invalide" }, 400);
   if (!username || username.length < 3 || username.length > 30 || !/^[a-zA-Z0-9_-]+$/.test(username))
     return c.json({ error: "Nom d'utilisateur : 3-30 caractères alphanumériques, _ ou -" }, 400);
-  if (!password || password.length < 8)
-    return c.json({ error: "Mot de passe : 8 caractères minimum" }, 400);
+  if (!password || password.length < 8 || password.length > 128)
+    return c.json({ error: "Mot de passe : 8 à 128 caractères" }, 400);
   if (users.getUserByEmail(email)) return c.json({ error: "Email déjà utilisé" }, 409);
   if (users.getUserByUsername(username)) return c.json({ error: "Nom d'utilisateur déjà pris" }, 409);
   const isFirst = users.countUsers() === 0;
@@ -85,7 +85,7 @@ app.post("/reset-password", async (c) => {
   const token = typeof b.token === "string" ? b.token : "";
   const password = typeof b.password === "string" ? b.password : "";
   if (!token || !password) return c.json({ error: "Token et mot de passe requis" }, 400);
-  if (password.length < 8) return c.json({ error: "Mot de passe : 8 caractères minimum" }, 400);
+  if (password.length < 8 || password.length > 128) return c.json({ error: "Mot de passe : 8 à 128 caractères" }, 400);
   const userId = users.consumeResetToken(token);
   if (!userId) return c.json({ error: "Token invalide ou expiré" }, 400);
   await users.updatePassword(userId, password);
@@ -103,7 +103,7 @@ app.patch("/change-password", requireAuth, async (c) => {
   const current = typeof b.current_password === "string" ? b.current_password : "";
   const next = typeof b.new_password === "string" ? b.new_password : "";
   if (!current || !next) return c.json({ error: "Champs requis" }, 400);
-  if (next.length < 8) return c.json({ error: "Nouveau mot de passe : 8 caractères minimum" }, 400);
+  if (next.length < 8 || next.length > 128) return c.json({ error: "Nouveau mot de passe : 8 à 128 caractères" }, 400);
   const user = users.getUserById(u.sub);
   if (!user || !(await users.verifyPassword(user, current)))
     return c.json({ error: "Mot de passe actuel incorrect" }, 401);

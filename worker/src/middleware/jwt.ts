@@ -2,9 +2,11 @@ import { SignJWT, jwtVerify } from "jose";
 import type { Context, Next } from "hono";
 import * as users from "../db/users";
 
-const SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? "changeme-in-prod-32chars-minimum"
-);
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret || jwtSecret.length < 32) {
+  throw new Error("[FATAL] JWT_SECRET doit etre defini et avoir au moins 32 caracteres");
+}
+const SECRET = new TextEncoder().encode(jwtSecret);
 const ALGORITHM = "HS256";
 const EXPIRY = "7d";
 

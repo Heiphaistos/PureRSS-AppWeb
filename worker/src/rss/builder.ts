@@ -4,9 +4,9 @@ export function buildRss(feed: FeedRow, items: ItemRow[]): string {
   const now = new Date().toUTCString();
 
   const itemsXml = items.map(item => {
-    const pubDate = item.pub_date
-      ? (isNaN(Date.parse(item.pub_date)) ? item.pub_date : new Date(item.pub_date).toUTCString())
-      : new Date(item.fetched_at).toUTCString();
+    const pubDate = item.pub_date && !isNaN(Date.parse(item.pub_date))
+      ? new Date(item.pub_date).toUTCString()
+      : new Date(item.fetched_at || Date.now()).toUTCString();
 
     return `
     <item>

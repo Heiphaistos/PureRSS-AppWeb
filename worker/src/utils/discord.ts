@@ -7,6 +7,13 @@ const EMBED_COLORS: Record<string, number> = {
   social:  0xdb61a2,
 };
 
+function escapeMd(str: string): string {
+  return str
+    .replace(/[*_~|>]/g, "\$&")
+    .replace(/@(everyone|here)/g, "@​$1");
+}
+
+
 interface DiscordEmbed {
   title: string;
   url: string;
@@ -23,7 +30,7 @@ function buildEmbed(feed: FeedRow, item: ItemRow): DiscordEmbed {
     title: item.title.length > 256 ? item.title.slice(0, 253) + "…" : item.title,
     url: item.link,
     color,
-    footer: { text: `PureRSS • ${feed.name}` },
+    footer: { text: `PureRSS • ${escapeMd(feed.name)}` },
   };
   if (item.description) {
     embed.description = item.description.length > 300
@@ -74,7 +81,7 @@ export async function sendTestEmbed(webhookUrl: string, feedName: string): Promi
   await postToWebhook(webhookUrl, {
     embeds: [{
       title: "✅ PureRSS — Webhook configuré",
-      description: `Le webhook pour le flux **${feedName}** est opérationnel. Les nouveaux items seront envoyés ici automatiquement.`,
+      description: `Le webhook pour le flux **${escapeMd(feedName)}** est opérationnel. Les nouveaux items seront envoyés ici automatiquement.`,
       color: 0x56d364,
       footer: { text: "PureRSS" },
       timestamp: new Date().toISOString(),
