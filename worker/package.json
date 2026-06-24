@@ -7,6 +7,9 @@
     "build": "tsup src/server.ts --format cjs --out-dir dist --no-splitting",
     "start": "node dist/server.js"
   },
+  "overrides": {
+    "esbuild": ">=0.28.1"
+  },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
     "bcryptjs": "^3.0.3",
