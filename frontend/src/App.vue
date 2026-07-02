@@ -502,12 +502,20 @@ function safeHref(url: string | null | undefined): string {
     <Teleport to="body">
       <div v-if="notification" :class="['notification', notification.type]">{{ notification.msg }}</div>
     </Teleport>
+
+    <footer class="legal-footer">
+      <a href="https://heiphaistos.org/legal/" target="_blank" rel="noopener noreferrer">Mentions légales</a>
+    </footer>
   </div>
 </template>
 
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
+
+.legal-footer { text-align: center; padding: 8px 0 12px; font-size: 0.72rem; }
+.legal-footer a { color: var(--text-muted); text-decoration: none; }
+.legal-footer a:hover { text-decoration: underline; }
 
 :root {
   --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --border: #30363d;
